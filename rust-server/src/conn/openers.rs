@@ -114,7 +114,9 @@ pub(crate) struct PostgresOpener {
     #[arg(long)]
     pub conn_str: String,
     #[arg(long)]
-    pub tls_cert_path: Option<String>,
+    pub tls_root_cert_path: Option<String>,
+    #[arg(long)]
+    pub use_tls: bool,
 }
 
 impl StorageOpen for PostgresOpener {
@@ -122,13 +124,14 @@ impl StorageOpen for PostgresOpener {
 
     async fn open(self) -> Result<Self::Conn> {
         let PostgresOpener {
-            tls_cert_path,
+            use_tls,
+            tls_root_cert_path,
             conn_str,
             schema_path,
         } = self;
         Ok({
-            let client = match tls_cert_path {
-                None => {
+            let client = match use_tls {
+                false => {
                     debug!("Initializing postgres storage without TLS");
                     let (client, conn) = tokio_postgres::connect(&conn_str, NoTls).await?;
                     tokio::spawn(async move {
@@ -138,14 +141,17 @@ impl StorageOpen for PostgresOpener {
                     });
                     client
                 }
-                Some(tls_cert_path) => {
-                    debug!("Initializing postgres storage with TLS");
-                    let cert = fs::read(tls_cert_path)?;
-                    let cert = Certificate::from_pem(&cert)?;
-                    let connector = TlsConnector::builder().add_root_certificate(cert).build()?;
+                true => {
+                    let mut builder = TlsConnector::builder();
+                    if let Some(tls_root_cert_path) = tls_root_cert_path {
+                        debug!("Adding TLS root cert from {}", tls_root_cert_path);
+                        let cert = fs::read(tls_root_cert_path)?;
+                        let cert = Certificate::from_pem(&cert)?;
+                        builder.add_root_certificate(cert);
+                    }
+                    let connector = builder.build()?;
                     let connector = MakeTlsConnector::new(connector);
-                    let (client, conn) =
-                        tokio_postgres::connect(&conn_str, connector).await?;
+                    let (client, conn) = tokio_postgres::connect(&conn_str, connector).await?;
                     tokio::spawn(async move {
                         if let Err(err) = conn.await {
                             error!(%err, "postgres connection failed");
