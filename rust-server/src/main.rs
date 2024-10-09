@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
         .on_request(())
         .on_body_chunk(());
     let app = axum::Router::new()
+        .route("/health", axum::routing::get(StatusCode::OK))
         .route(
             "/",
             axum::routing::post({
