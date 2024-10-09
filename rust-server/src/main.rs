@@ -38,7 +38,6 @@ struct Args {
 #[derive(Clone, clap::Subcommand)]
 enum Storage {
     Sqlite(SqliteOpen),
-    DuckDB(DuckDbOpen),
     JsonFiles(JsonFilesOpen),
     Postgres(PostgresOpener),
 }
@@ -49,7 +48,6 @@ impl Storage {
         // over enums that all implement the same trait?
         match self {
             Storage::Sqlite(open) => Self::do_open(open).await,
-            Storage::DuckDB(open) => Self::do_open(open).await,
             Storage::JsonFiles(open) => Self::do_open(open).await,
             Storage::Postgres(open) => Self::do_open(open).await,
         }

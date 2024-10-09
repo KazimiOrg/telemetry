@@ -86,8 +86,6 @@ telemetry is ready for use now. If there are changes in the future, migration sh
 
 Here are some ideas for future development:
 
-- Switch from SQLite to DuckDB. SQLite is designed for OLTP, and DuckDB for OLAP and probably much better suited to performing analytical queries on the data.
-
 - Provide a way to stream events from the database. That way you can stream to the database then have a live view of your application.
 
 - Provide a [tracing subscriber](https://tracing.rs/tracing_subscriber/index.html) for Rust (for the [tracing crate](https://tracing.rs/tracing/)) that sends telemetry to the server in this implementation. Note that this handles conventional tracing and log concepts in one. This does not require OpenTelemetry! Find something similar for Go for tracing that isn't related to OpenTelemetry.

@@ -174,31 +174,6 @@ impl Connection for rusqlite::Connection {
     }
 }
 
-#[async_trait]
-impl Connection for duckdb::Connection {
-    async fn new_stream(&mut self, headers_value: SerializedHeaders) -> Result<StreamId> {
-        Ok(self.query_row(
-            "insert into streams (headers) values (?) returning stream_id",
-            duckdb::params![headers_value],
-            |row| row.get(0),
-        )?)
-    }
-    async fn insert_event(
-        &mut self,
-        stream_id: StreamId,
-        stream_event_index: StreamEventIndex,
-        payload: &str,
-    ) -> Result<()> {
-        self.execute(
-            "\
-            insert into events (stream_event_index, payload, stream_id) \
-            values (?, ?, ?)",
-            duckdb::params![stream_event_index, payload, stream_id],
-        )?;
-        Ok(())
-    }
-}
-
 pub struct JsonFiles {
     streams: JsonFileWriter,
     events: JsonFileWriter,

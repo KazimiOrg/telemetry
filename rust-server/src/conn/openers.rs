@@ -11,8 +11,6 @@ use tracing::{debug, error, warn};
 struct LocalStorageArgs {
     #[arg(long)]
     schema_path: Option<String>,
-    // I'd rather have a default for duck DB and sqlite that are exposed here, but LocalStorageArgs
-    // is shared by them.
     #[arg(long)]
     db_path: Option<PathBuf>,
 }
@@ -61,34 +59,6 @@ impl StorageOpen for SqliteOpen {
     }
 }
 
-#[derive(Clone, clap::Args)]
-pub struct DuckDbOpen {
-    #[command(flatten)]
-    args: LocalStorageArgs,
-}
-
-impl StorageOpen for DuckDbOpen {
-    type Conn = duckdb::Connection;
-
-    async fn open(self) -> Result<Self::Conn> {
-        let db_path = self
-            .args
-            .db_path
-            .clone()
-            .unwrap_or_else(|| "duck.db".into());
-        let schema_contents = self
-            .args
-            .open_schema_path_or_embedded(include_str!("../../sql/duckdb.sql"))?;
-        let mut conn = duckdb::Connection::open(db_path)?;
-        let tx = conn.transaction()?;
-        if let Err(err) = tx.execute_batch(&schema_contents) {
-            warn!(%err, "initing duckdb schema (haven't figured out user_version yet)");
-        }
-        tx.commit()?;
-        Ok(conn)
-    }
-}
-
 pub trait StorageOpen {
     type Conn;
     async fn open(self) -> Result<Self::Conn>;
@@ -130,6 +100,10 @@ impl StorageOpen for PostgresOpener {
             schema_path,
         } = self;
         Ok({
+            // debug!(
+            //     "Initializing postgres storage with connection string {}",
+            //     conn_str
+            // );
             let client = match use_tls {
                 false => {
                     debug!("Initializing postgres storage without TLS");
