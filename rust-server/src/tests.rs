@@ -14,7 +14,8 @@ async fn test_postgres_new_stream_and_event() -> anyhow::Result<()> {
         PostgresOpener {
             schema_path: "sql/postgres.sql".to_owned(),
             conn_str: connection_uri.to_owned(),
-            tls_cert_path: None,
+            tls_root_cert_path: None,
+            use_tls: false,
         }
         .open()
         .await
