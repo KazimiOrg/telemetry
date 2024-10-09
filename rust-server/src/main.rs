@@ -5,6 +5,7 @@ mod conn;
 mod stream_id;
 
 use conn::*;
+use std::net::SocketAddr;
 use stream_id::StreamId;
 
 use anyhow::{anyhow, Context, Result};
@@ -31,6 +32,9 @@ use Error::*;
 
 #[derive(clap::Parser)]
 struct Args {
+    #[arg(long)]
+    #[arg(default_value_t = String::from("4318"))]
+    port: String,
     #[command(subcommand)]
     storage: Storage,
 }
@@ -129,7 +133,8 @@ async fn main() -> Result<()> {
         .layer(tower_layer);
     // This is just the OTLP/HTTP port, because if we're using this we're probably not using OTLP. I
     // want this to bind dual stack, but I don't see any obvious way to do it with one call.
-    let listener = tokio::net::TcpListener::bind("[::]:4318").await?;
+    let addr = SocketAddr::from(([0, 0, 0, 0], args.port.parse()?));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     let listener_local_addr = listener.local_addr()?;
     info!(?listener_local_addr, "serving http");
     let http_server = axum::serve(listener, app)
