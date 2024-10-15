@@ -21,6 +21,7 @@ use futures::{Stream, StreamExt};
 use std::fmt::{Debug, Display, Formatter};
 use std::future::{poll_fn, Future, IntoFuture};
 use std::io::Write;
+use std::path::PathBuf;
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -30,40 +31,60 @@ use tokio::sync::Mutex;
 use tracing::*;
 use Error::*;
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Storage {
+    Sqlite,
+    JsonFiles,
+    Postgres,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct Config {
+    /// Storage type to use: sqlite, json-files, or postgres.
+    storage: Storage,
+    port: u16,
+    /// The path to a custom schema file to use instead of the embedded one.
+    custom_schema_path: Option<PathBuf>,
+    /// The connection string for the database. Used only for Postgres.
+    dbconnstring: Option<String>,
+    /// The path to the TLS root certificate. Used only for Postgres.
+    tls_root_cert_path: Option<PathBuf>,
+    /// Local path to the DB files. Used only for JsonFiles and Sqlite.
+    db_path: Option<PathBuf>,
+    /// Whether to use TLS for Postgres.
+    use_tls: bool,
+}
+
 #[derive(clap::Parser)]
 struct Args {
     #[arg(long)]
-    #[arg(default_value_t = String::from("4318"))]
-    port: String,
-    #[command(subcommand)]
-    storage: Storage,
+    config_path: PathBuf,
 }
 
-#[derive(Clone, clap::Subcommand)]
-enum Storage {
-    Sqlite(SqliteOpen),
-    JsonFiles(JsonFilesOpen),
-    Postgres(PostgresOpener),
-}
-
-impl Storage {
-    pub(crate) async fn open(self) -> Result<Box<dyn Connection + Send>> {
-        // Moving the box/dyn stuff into the trait doesn't seem better. Rust doesn't let me dispatch
-        // over enums that all implement the same trait?
-        match self {
-            Storage::Sqlite(open) => Self::do_open(open).await,
-            Storage::JsonFiles(open) => Self::do_open(open).await,
-            Storage::Postgres(open) => Self::do_open(open).await,
+async fn open(config: &Config) -> Result<Box<dyn Connection + Send>> {
+    Ok(match config.storage {
+        Storage::Sqlite => {
+            SqliteOpen {
+                custom_schema_path: config.custom_schema_path.clone(),
+                db_path: config.db_path.clone(),
+            }
+            .open()
+            .await?
         }
-    }
-
-    async fn do_open<O>(opener: O) -> Result<Box<dyn Connection + Send>>
-    where
-        O: StorageOpen,
-        <O as StorageOpen>::Conn: Connection + 'static,
-    {
-        Ok(Box::new(opener.open().await?))
-    }
+        Storage::JsonFiles => JsonFilesOpen {}.open().await?,
+        Storage::Postgres => {
+            PostgresOpener {
+                custom_schema_path: config.custom_schema_path.clone(),
+                dbconnstring: config.dbconnstring.clone().expect("postgres dbconnstring"),
+                tls_root_cert_path: config.tls_root_cert_path.clone(),
+                use_tls: config.use_tls,
+            }
+            .open()
+            .await?
+        }
+    })
 }
 
 #[tokio::main]
@@ -84,7 +105,8 @@ async fn main() -> Result<()> {
         .init();
     debug!(test_arg = "hi mum", "debug level test");
     let args = Args::parse();
-    let db_conn = args.storage.open().await?;
+    let config: Config = serde_yaml::from_reader(std::fs::File::open(args.config_path)?)?;
+    let db_conn = open(&config).await?;
     let commit_on_sigint = db_conn.commit_on_sigint();
     let db_conn = Arc::new(Mutex::new(db_conn));
 
@@ -134,7 +156,7 @@ async fn main() -> Result<()> {
         .layer(tower_layer);
     // This is just the OTLP/HTTP port, because if we're using this we're probably not using OTLP. I
     // want this to bind dual stack, but I don't see any obvious way to do it with one call.
-    let addr = SocketAddr::from(([0, 0, 0, 0], args.port.parse()?));
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let listener_local_addr = listener.local_addr()?;
     info!(?listener_local_addr, "serving http");

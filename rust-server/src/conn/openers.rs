@@ -7,42 +7,25 @@ use std::path::PathBuf;
 use tokio_postgres::NoTls;
 use tracing::{debug, error, warn};
 
-#[derive(Clone, clap::Args)]
-struct LocalStorageArgs {
-    #[arg(long)]
-    schema_path: Option<String>,
-    #[arg(long)]
-    db_path: Option<PathBuf>,
+pub trait StorageOpen {
+    async fn open(self) -> Result<Box<dyn Connection + Send>>;
 }
 
-impl LocalStorageArgs {
-    fn open_schema_path_or_embedded(&self, embedded: &str) -> Result<String> {
-        if let Some(schema_path) = &self.schema_path {
-            Ok(fs::read_to_string(schema_path)?)
-        } else {
-            Ok(embedded.to_owned())
-        }
-    }
-}
-
-#[derive(Clone, clap::Args)]
 pub struct SqliteOpen {
-    #[command(flatten)]
-    args: LocalStorageArgs,
+    pub custom_schema_path: Option<PathBuf>,
+    pub db_path: Option<PathBuf>,
 }
 
 impl StorageOpen for SqliteOpen {
-    type Conn = rusqlite::Connection;
-
-    async fn open(self) -> Result<Self::Conn> {
+    async fn open(self) -> Result<Box<dyn Connection + Send>> {
         let db_path = self
-            .args
             .db_path
             .clone()
             .unwrap_or_else(|| "telemetry.sqlite.db".to_owned().into());
-        let schema_contents = self
-            .args
-            .open_schema_path_or_embedded(include_str!("../../sql/sqlite.sql"))?;
+        let schema_contents = match self.custom_schema_path {
+            Some(custom_schema_path) => fs::read_to_string(custom_schema_path)?,
+            None => include_str!("../../sql/sqlite.sql").to_owned(),
+        };
         let mut conn = rusqlite::Connection::open(db_path)?;
         conn.pragma_update(None, "foreign_keys", "on")?;
         if !conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))? {
@@ -55,59 +38,41 @@ impl StorageOpen for SqliteOpen {
             tx.pragma_update(None, "user_version", 1)?;
         }
         tx.commit()?;
-        Ok(conn)
+        Ok(Box::new(conn))
     }
 }
 
-pub trait StorageOpen {
-    type Conn;
-    async fn open(self) -> Result<Self::Conn>;
-}
-
-#[derive(Clone, clap::Args)]
 pub struct JsonFilesOpen {}
 
 impl StorageOpen for JsonFilesOpen {
-    type Conn = JsonFiles;
-
-    async fn open(self) -> Result<Self::Conn> {
+    async fn open(self) -> Result<Box<dyn Connection + Send>> {
         let streams = JsonFileWriter::new("streams".to_owned()).context("opening streams")?;
         let events = JsonFileWriter::new("events".to_owned()).context("opening events")?;
-        Ok(JsonFiles { streams, events })
+        Ok(Box::new(JsonFiles { streams, events }))
     }
 }
 
-#[derive(Clone, clap::Args)]
 pub(crate) struct PostgresOpener {
-    #[arg(long)]
-    pub schema_path: String,
-    #[arg(long)]
-    pub conn_str: String,
-    #[arg(long)]
-    pub tls_root_cert_path: Option<String>,
-    #[arg(long)]
+    pub custom_schema_path: Option<PathBuf>,
+    pub dbconnstring: String,
+    pub tls_root_cert_path: Option<PathBuf>,
+    // TODO: Extract this from the connection string.
     pub use_tls: bool,
 }
 
 impl StorageOpen for PostgresOpener {
-    type Conn = Postgres;
-
-    async fn open(self) -> Result<Self::Conn> {
+    async fn open(self) -> Result<Box<dyn Connection + Send>> {
         let PostgresOpener {
             use_tls,
             tls_root_cert_path,
-            conn_str,
-            schema_path,
+            dbconnstring,
+            custom_schema_path,
         } = self;
         Ok({
-            // debug!(
-            //     "Initializing postgres storage with connection string {}",
-            //     conn_str
-            // );
             let client = match use_tls {
                 false => {
                     debug!("Initializing postgres storage without TLS");
-                    let (client, conn) = tokio_postgres::connect(&conn_str, NoTls).await?;
+                    let (client, conn) = tokio_postgres::connect(&dbconnstring, NoTls).await?;
                     tokio::spawn(async move {
                         if let Err(err) = conn.await {
                             error!(%err, "postgres connection failed");
@@ -118,14 +83,14 @@ impl StorageOpen for PostgresOpener {
                 true => {
                     let mut builder = TlsConnector::builder();
                     if let Some(tls_root_cert_path) = tls_root_cert_path {
-                        debug!("Adding TLS root cert from {}", tls_root_cert_path);
+                        debug!("Adding TLS root cert from {}", tls_root_cert_path.display());
                         let cert = fs::read(tls_root_cert_path)?;
                         let cert = Certificate::from_pem(&cert)?;
                         builder.add_root_certificate(cert);
                     }
                     let connector = builder.build()?;
                     let connector = MakeTlsConnector::new(connector);
-                    let (client, conn) = tokio_postgres::connect(&conn_str, connector).await?;
+                    let (client, conn) = tokio_postgres::connect(&dbconnstring, connector).await?;
                     tokio::spawn(async move {
                         if let Err(err) = conn.await {
                             error!(%err, "postgres connection failed");
@@ -134,11 +99,12 @@ impl StorageOpen for PostgresOpener {
                     client
                 }
             };
-            // Init DB schema
-            client
-                .batch_execute(fs::read_to_string(schema_path)?.as_str())
-                .await?;
-            Postgres { client }
+            let schema_contents = match custom_schema_path {
+                Some(custom_schema_path) => fs::read_to_string(custom_schema_path)?,
+                None => include_str!("../../sql/postgres.sql").to_owned(),
+            };
+            client.batch_execute(&schema_contents).await?;
+            Box::new(Postgres { client })
         })
     }
 }
