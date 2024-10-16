@@ -49,8 +49,8 @@ struct Config {
     custom_schema_path: Option<PathBuf>,
     /// The connection string for the database. Used only for Postgres.
     dbconnstring: Option<String>,
-    /// The path to the TLS root certificate. Used only for Postgres.
-    tls_root_cert_path: Option<PathBuf>,
+    /// The TLS root certificate as a PEM string. Used only for Postgres.
+    tls_root_cert: Option<String>,
     /// Local path to the DB files. Used only for JsonFiles and Sqlite.
     db_path: Option<PathBuf>,
     /// Whether to use TLS for Postgres.
@@ -78,7 +78,7 @@ async fn open(config: &Config) -> Result<Box<dyn Connection + Send>> {
             PostgresOpener {
                 custom_schema_path: config.custom_schema_path.clone(),
                 dbconnstring: config.dbconnstring.clone().expect("postgres dbconnstring"),
-                tls_root_cert_path: config.tls_root_cert_path.clone(),
+                tls_root_cert: config.tls_root_cert.clone(),
                 use_tls: config.use_tls,
             }
             .open()
@@ -127,8 +127,6 @@ async fn main() -> Result<()> {
     });
 
     let server = Arc::new(Server { db_conn });
-    // TODO: Catch a signal or handle an endpoint that triggers the db conn to be committed. Also do
-    // this on a timer.
     let tower_layer = tower_http::trace::TraceLayer::new_for_http()
         .make_span_with(tower_http::trace::DefaultMakeSpan::new().include_headers(true))
         .on_request(())

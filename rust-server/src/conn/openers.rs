@@ -53,7 +53,7 @@ impl StorageOpen for JsonFilesOpen {
 pub(crate) struct PostgresOpener {
     pub custom_schema_path: Option<PathBuf>,
     pub dbconnstring: String,
-    pub tls_root_cert_path: Option<PathBuf>,
+    pub tls_root_cert: Option<String>,
     // TODO: Extract this from the connection string.
     pub use_tls: bool,
 }
@@ -62,7 +62,7 @@ impl StorageOpen for PostgresOpener {
     async fn open(self) -> Result<Box<dyn Connection + Send>> {
         let PostgresOpener {
             use_tls,
-            tls_root_cert_path,
+            tls_root_cert,
             dbconnstring,
             custom_schema_path,
         } = self;
@@ -90,25 +90,22 @@ impl StorageOpen for PostgresOpener {
                     //
                     // If rustls ever breaks here, we can use postgres-native-tls and vendor
                     // openssl (see link above).
-                    let mut roots = rustls::RootCertStore::empty();
-                    // Load the platform's root certificates into the store
-                    for cert in rustls_native_certs::load_native_certs()
-                        .expect("could not load platform certs")
-                    {
-                        roots.add(cert).unwrap();
-                    }
+                    let mut root_store = rustls::RootCertStore::from_iter(
+                        webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
+                    );
                     // Load the user's root certificates into the store, if any
-                    if let Some(tls_root_cert_path) = tls_root_cert_path {
-                        debug!("Adding TLS root cert from {}", tls_root_cert_path.display());
-                        let cert_bytes = fs::read(tls_root_cert_path)?;
-                        let cert = rustls_pki_types::CertificateDer::from_slice(&cert_bytes[..]);
-                        roots.add(cert).unwrap();
+                    if let Some(tls_root_cert) = tls_root_cert {
+                        info!("Adding custom TLS root cert");
+                        rustls_pemfile::certs(&mut std::io::BufReader::new(
+                            tls_root_cert.as_bytes(),
+                        ))
+                        .for_each(|cert| (root_store.add(cert.unwrap()).unwrap()));
                     }
                     let (client, conn) = tokio_postgres::connect(
                         &dbconnstring,
                         tokio_postgres_rustls::MakeRustlsConnect::new(
                             rustls::ClientConfig::builder()
-                                .with_root_certificates(roots)
+                                .with_root_certificates(root_store)
                                 .with_no_client_auth(),
                         ),
                     )
@@ -118,6 +115,7 @@ impl StorageOpen for PostgresOpener {
                             error!(%err, "postgres connection failed");
                         }
                     });
+                    info!("Connected to Postgres");
                     client
                 }
             };
