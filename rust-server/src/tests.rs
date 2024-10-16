@@ -14,7 +14,7 @@ async fn test_postgres_new_stream_and_event() -> anyhow::Result<()> {
         PostgresOpener {
             // We'll use the embedded schema.
             custom_schema_path: None,
-            conn_str: connection_uri.to_owned(),
+            dbconnstring: connection_uri.to_owned(),
             tls_root_cert_path: None,
             use_tls: false,
         }
