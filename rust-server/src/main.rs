@@ -103,9 +103,9 @@ async fn main() -> Result<()> {
             )
         })
         .init();
-    debug!(test_arg = "hi mum", "debug level test");
     let args = Args::parse();
     let config: Config = serde_yaml::from_reader(std::fs::File::open(args.config_path)?)?;
+    debug!("Config: {:?}", config);
     let db_conn = open(&config).await?;
     let commit_on_sigint = db_conn.commit_on_sigint();
     let db_conn = Arc::new(Mutex::new(db_conn));
