@@ -1,0 +1,5 @@
+[build]
+# Use latest clang instead of GCC since the bundled GCC is really old (v9) and
+# aws-lc (dependency of rustls) doesn't like it:
+# https://github.com/librespot-org/librespot/issues/1346
+pre-build = ["apt-get update && apt-get remove --assume-yes gcc-9 && apt-get install --assume-yes --no-install-recommends libclang-dev clang"]
