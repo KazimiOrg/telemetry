@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	g "github.com/anacrolix/generics"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/anacrolix/chansync"
 	"github.com/anacrolix/chansync/events"
+	g "github.com/anacrolix/generics"
 	"nhooyr.io/websocket"
 )
 
@@ -266,7 +267,7 @@ func (me *Writer) payloadWriter(ctx context.Context, w func(b []byte) error) err
 		me.Logger.DebugContext(ctx, "writing payload", "len", len(b))
 		err = w(b)
 		if err != nil {
-			me.Logger.DebugContext(ctx, "error writing payload", "err", err)
+			me.Logger.DebugContext(ctx, "error writing payload", "err", err, "b", string(b))
 		}
 		return
 	}
@@ -298,7 +299,10 @@ func (me *Writer) payloadWriter(ctx context.Context, w func(b []byte) error) err
 func (me *Writer) lazyInit() {
 	me.init.Do(func() {
 		if me.Logger == nil {
-			me.Logger = slog.Default()
+			me.Logger = slog.New(slog.NewTextHandler(
+				os.Stderr,
+				&slog.HandlerOptions{Level: slog.LevelDebug})).
+				With("package", "anacrolix/telemetry")
 		}
 		me.buf = make(chan []byte, 1024)
 		me.ctx, me.cancel = context.WithCancel(context.Background())
